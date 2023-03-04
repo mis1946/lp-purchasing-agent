@@ -7,7 +7,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.text.DecimalFormat;
+import java.text.DecimalFormat;  
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -124,7 +124,6 @@ public class XMPOReceiving implements XMRecord{
     @Override
     public boolean openRecord(String fstransNox) {
         poData = poControl.loadTransaction(fstransNox);
-        
         if (poData.getTransNox()== null){
             ShowMessageFX();
             return false;
@@ -257,7 +256,12 @@ public class XMPOReceiving implements XMRecord{
             loJSON.put("sField02", lsDescript);
             loJSON.put("sField05", lsMeasurex);
             loJSON.put("nField01", poControl.getDetail(lnCtr, "nQuantity"));
-            loJSON.put("lField01", poControl.getDetail(lnCtr, "nUnitPrce"));
+            loJSON.put("lField02", poControl.getDetail(lnCtr, "nUnitPrce"));
+            JSONObject foSupplier = GetSupplier((String)getMaster(5), true);
+            if (foSupplier != null) {
+             loJSON.put("sField03", loSupplier.get("sClientNm"));
+            }
+
             loArray.add(loJSON);
         }
                  
@@ -492,6 +496,8 @@ public class XMPOReceiving implements XMRecord{
                     loJSON = showFXDialog.jsonBrowse(poGRider, loRS, lsHeader, lsColName);
                 }
                 else {
+                    lsSQL = MiscUtil.addCondition(lsSQL, "a.sTransNox LIKE " + SQLUtil.toSQL(fsValue + "%"));
+                
                     loJSON = showFXDialog.jsonSearch(poGRider, 
                                                         lsSQL, 
                                                         fsValue, 
@@ -507,6 +513,7 @@ public class XMPOReceiving implements XMRecord{
                     return loJSON;
                 } else{
                     setDetail(fnRow, fnCol, "");
+                   
                     return null;
                 }
             case 4:
