@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -106,8 +107,8 @@ public class POReceiving {
         }
         return true;
     }
-    
-        public boolean addDetailOrder() {
+
+    public boolean addDetailOrder() {
         if (paDetail.isEmpty()) {
             paDetail.add(new UnitPOReceivingDetail());
 
@@ -847,10 +848,10 @@ public class POReceiving {
             return lbResult;
         }
 
-        if (poGRider.getUserLevel() < UserRight.SUPERVISOR) {
-            setMessage("User is not allowed confirming transaction.");
-            return lbResult;
-        }
+//        if (poGRider.getUserLevel() < UserRight.SUPERVISOR) {
+//            setMessage("User is not allowed confirming transaction.");
+//            return lbResult;
+//        }
 
         if (!loObject.getTranStat().equalsIgnoreCase(TransactionStatus.STATE_OPEN)) {
             setMessage("Unable to close closed/cancelled/posted/voided transaction.");
@@ -1079,6 +1080,10 @@ public class POReceiving {
         loInvTrans.InitTransaction();
 
         for (int lnCtr = 0; lnCtr <= paDetail.size() - 1; lnCtr++) {
+            if (!checkInvTransBegDate(paDetail.get(lnCtr).getStockID())) {
+                return false;
+
+            }
             if (paDetail.get(lnCtr).getStockID().equals("")) {
                 break;
             }
@@ -1222,6 +1227,55 @@ public class POReceiving {
         }
 
         return saveInvAvgCost();
+    }
+
+    //This function will check if Beg. Date is Greater than PO Receiving Date
+    //IF INV_MASTER >= into PO Receiving Date return UPDATE BEG DATE SET PO Receiving Date -1
+    //ex.PO_Receiving Date 2026/01/01 - Current Inv_Master beg. Date 2026/01/27
+    //INV_MASTER set dBegDate = 2025/12/31
+    public boolean checkInvTransBegDate(String stockID) {
+        String lsSQL = "SELECT "
+                + " sStockIDx "
+                + ", sBranchCD "
+                + ", dBegInvxx "
+                + " FROM Inv_Master "
+                + " WHERE sBranchCD = " + SQLUtil.toSQL(poGRider.getBranchCode())
+                + " AND sStockIDx = " + SQLUtil.toSQL(stockID);
+
+        ResultSet loRS = poGRider.executeQuery(lsSQL);
+
+        try {
+            if (loRS.next()) {
+                Date begDate = loRS.getDate("dBegInvxx");
+                Date transDate = poData.getDateTransact();
+
+                // If begDate is null or after the transaction date
+                if (begDate == null || begDate.after(transDate)) {
+
+                    // Subtract 1 day from transaction date using Calendar
+                    Calendar cal = Calendar.getInstance();
+                    cal.setTime(transDate);
+                    cal.add(Calendar.DAY_OF_MONTH, -1); // subtract 1 day
+                    java.util.Date newBegDate = cal.getTime();
+
+                    lsSQL = "UPDATE Inv_Master SET dBegInvxx = " + SQLUtil.toSQL(newBegDate)
+                            + " WHERE sBranchCD = " + SQLUtil.toSQL(poGRider.getBranchCode())
+                            + " AND sStockIDx = " + SQLUtil.toSQL(stockID);
+
+                    if (poGRider.executeQuery(lsSQL, "Inventory", psBranchCd, "") <= 0) {
+                        setMessage("Unable to update inventory master beginning date.");
+                        return false;
+                    }
+                }
+            }
+        } catch (SQLException ex) {
+            setMessage(ex.getMessage());
+            Logger.getLogger(POReceiving.class.getName()).log(Level.SEVERE, null, ex);
+            return false;
+
+        }
+
+        return true;
     }
 
     public boolean SearchDetail(int fnRow, int fnCol, String fsValue, boolean fbSearch, boolean fbByCode) {
