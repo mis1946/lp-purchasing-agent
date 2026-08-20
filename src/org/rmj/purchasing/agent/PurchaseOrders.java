@@ -334,8 +334,136 @@ public class PurchaseOrders {
 
         return lnTranTotal;
     }
-
+    
     public boolean saveTransaction() {
+    String lsSQL = "";
+    boolean lbUpdate = false;
+
+    UnitPOMaster loOldEnt = null;
+    UnitPOMaster loNewEnt = null;
+    UnitPOMaster loResult = null;
+
+    // Check for the value of poData
+    if (!(poData instanceof UnitPOMaster)) {
+        setErrMsg("Invalid Entity Passed as Parameter");
+        return false;
+    }
+
+    // Typecast the Entity to this object
+    loNewEnt = (UnitPOMaster) poData;
+
+    // Test if entry is ok
+    if (loNewEnt.getBranchCd() == null || loNewEnt.getBranchCd().isEmpty()) {
+        setMessage("No branch detected.");
+        return false;
+    }
+
+    if (loNewEnt.getDateTransact() == null) {
+        setMessage("No transact date detected.");
+        return false;
+    }
+
+    if (loNewEnt.getCompanyID() == null || loNewEnt.getCompanyID().isEmpty()) {
+        setMessage("No company detected.");
+        return false;
+    }
+
+    if (loNewEnt.getDestinat() == null || loNewEnt.getDestinat().isEmpty()) {
+        setMessage("No destination detected.");
+        return false;
+    }
+
+    if (loNewEnt.getSupplier() == null || loNewEnt.getSupplier().isEmpty()) {
+        setMessage("No supplier detected.");
+        return false;
+    }
+
+    if (getDetail(ItemCount() - 1, "sStockIDx").equals("")) {
+        deleteDetail(ItemCount() - 1);
+    }
+
+    if (ItemCount() <= 0) {
+        setMessage("Unable to save no item record.");
+        return false;
+    }
+
+    loNewEnt.setTranTotal(computeTotal());
+
+    /*
+     * ============================================================
+     * NEW RECORD
+     *
+     * IMPORTANT:
+     * Do NOT trust the transaction number generated when the
+     * New PO screen was opened.
+     *
+     * saveNewTransaction() gets a fresh number immediately
+     * before saving.
+     * ============================================================
+     */
+    if (pnEditMode == EditMode.ADDNEW) {
+        return saveNewTransaction(loNewEnt);
+    }
+
+    /*
+     * ============================================================
+     * EXISTING RECORD / UPDATE
+     *
+     * Everything below remains the normal update process.
+     * ============================================================
+     */
+    if (!pbWithParent) {
+        poGRider.beginTrans();
+    }
+
+    // Load previous transaction
+    loOldEnt = loadTransaction(poData.getTransNox());
+
+    loNewEnt.setEntryNox(ItemCount());
+    loNewEnt.setDateModified(poGRider.getServerDate());
+
+    lbUpdate = saveDetail(loNewEnt.getTransNox());
+
+    if (!lbUpdate) {
+        lsSQL = "";
+    } else {
+        lsSQL = MiscUtil.makeSQL(
+                (GEntity) loNewEnt,
+                (GEntity) loOldEnt,
+                "sTransNox = " + SQLUtil.toSQL(loNewEnt.getValue(1))
+        );
+    }
+
+    if (!lsSQL.equals("") && getErrMsg().isEmpty()) {
+        if (poGRider.executeQuery(
+                lsSQL,
+                loNewEnt.getTable(),
+                "",
+                ""
+        ) == 0) {
+
+            if (!poGRider.getErrMsg().isEmpty()) {
+                setErrMsg(poGRider.getErrMsg());
+            } else {
+                setMessage("No record updated");
+            }
+        }
+
+        lbUpdate = true;
+    }
+
+    if (!pbWithParent) {
+        if (!getErrMsg().isEmpty()) {
+            poGRider.rollbackTrans();
+        } else {
+            poGRider.commitTrans();
+        }
+    }
+
+    return lbUpdate;
+}
+
+    public boolean saveTransaction1() {
         String lsSQL = "";
         boolean lbUpdate = false;
 
@@ -648,7 +776,7 @@ public class PurchaseOrders {
         return lbResult;
     }
 
-    public boolean closeTransaction(String fsTransNox, String fsUserIDxx, String fsAprvCode) {
+    public boolean closeTransaction1(String fsTransNox, String fsUserIDxx, String fsAprvCode) {
         UnitPOMaster loObject = loadTransaction(fsTransNox);
         boolean lbResult = false;
         if (pnEditMode != EditMode.READY) {
@@ -705,6 +833,99 @@ public class PurchaseOrders {
                 }
             }
         }
+
+        return lbResult;
+    }
+    public boolean closeTransaction(String fsTransNox, String fsUserIDxx, String fsAprvCode) {
+
+        System.out.println("CLOSE: Start");
+
+        UnitPOMaster loObject = loadTransaction(fsTransNox);
+
+        System.out.println("CLOSE: loadTransaction finished");
+
+        boolean lbResult = false;
+
+        if (pnEditMode != EditMode.READY) {
+            System.out.println("CLOSE: Invalid edit mode = " + pnEditMode);
+            return false;
+        }
+
+        if (loObject == null) {
+            setMessage("No record found...");
+            return false;
+        }
+
+        if (fsAprvCode == null || fsAprvCode.isEmpty()) {
+            setMessage("Invalid/No approval code detected.");
+            return false;
+        }
+
+        if (!loObject.getTranStat().equalsIgnoreCase(TransactionStatus.STATE_OPEN)) {
+            setMessage("Unable to close closed/cancelled/posted/voided transaction.");
+            return false;
+        }
+
+        if (poGRider.getUserLevel() < UserRight.SUPERVISOR) {
+            setMessage("User is not allowed confirming transaction.");
+            return false;
+        }
+
+        String lsSQL = "UPDATE " + loObject.getTable()
+                + " SET cTranStat = " + SQLUtil.toSQL(TransactionStatus.STATE_CLOSED)
+                + ", sApproved = " + SQLUtil.toSQL(fsUserIDxx)
+                + ", dApproved = " + SQLUtil.toSQL(poGRider.getServerDate())
+                + ", sAprvCode = " + SQLUtil.toSQL(fsAprvCode)
+                + ", sModified = " + SQLUtil.toSQL(psUserIDxx)
+                + ", dModified = " + SQLUtil.toSQL(poGRider.getServerDate())
+                + " WHERE sTransNox = " + SQLUtil.toSQL(loObject.getTransNox());
+
+        System.out.println("CLOSE: SQL = " + lsSQL);
+
+        if (!pbWithParent) {
+            System.out.println("CLOSE: Before beginTrans");
+            poGRider.beginTrans();
+            System.out.println("CLOSE: After beginTrans");
+        }
+
+        System.out.println("CLOSE: Before executeQuery");
+
+        if (poGRider.executeQuery(
+                lsSQL,
+                loObject.getTable(),
+                "",
+                ""
+        ) == 0) {
+
+            System.out.println("CLOSE: executeQuery returned 0");
+
+            if (!poGRider.getErrMsg().isEmpty()) {
+                setErrMsg(poGRider.getErrMsg());
+            } else {
+                setErrMsg("No record updated.");
+            }
+
+        } else {
+
+            System.out.println("CLOSE: executeQuery succeeded");
+
+            lbResult = true;
+        }
+
+        if (!pbWithParent) {
+
+            System.out.println("CLOSE: Before commit/rollback");
+
+            if (!getErrMsg().isEmpty()) {
+                poGRider.rollbackTrans();
+                System.out.println("CLOSE: rollback complete");
+            } else {
+                poGRider.commitTrans();
+                System.out.println("CLOSE: commit complete");
+            }
+        }
+
+        System.out.println("CLOSE: Finished");
 
         return lbResult;
     }
@@ -1384,7 +1605,252 @@ public class PurchaseOrders {
             }
         }
     }
+    
+    
+        private String getDestinat(String sBranchCd) {
+            String lsSQL = "SELECT sBranchCd, sBranchNm FROM Branch WHERE sBranchCd = " + SQLUtil.toSQL(sBranchCd);
 
+            try (ResultSet rs = poGRider.executeQuery(lsSQL)) {
+                if (rs.next()) {
+                    return rs.getString("sBranchNm");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            return "";
+        }
+    
+        private String takeTerm(String sTermCode) {
+            String lsSQL = "SELECT sTermCode, sDescript FROM Term WHERE sTermCode = " + SQLUtil.toSQL(sTermCode);
+
+            try (ResultSet rs = poGRider.executeQuery(lsSQL)) {
+                if (rs.next()) {
+                    return rs.getString("sDescript");
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            return "";
+        }
+        
+
+//Helpers 
+        private boolean isDuplicateKeyError(String fsErrMsg) {
+            return fsErrMsg != null && (
+                    fsErrMsg.contains("Duplicate entry")
+                    || fsErrMsg.contains("1062")
+                    || fsErrMsg.toLowerCase().contains("duplicate key")
+            );
+        }
+
+        private boolean isTransNoxSaved(String fsTransNox) {
+            String lsSQL = "SELECT sTransNox FROM " + poData.getTable()
+                         + " WHERE sTransNox = " + SQLUtil.toSQL(fsTransNox)
+                         + " LIMIT 1";
+
+            try (ResultSet loRS = poGRider.executeQuery(lsSQL)) {
+                return loRS.next();
+            } catch (SQLException ex) {
+                setErrMsg(ex.getMessage());
+                return true;
+            }
+        }
+
+        private String getFreshTransNox() {
+            Connection loConn = null;
+
+            try {
+                loConn = setConnection();
+
+                return MiscUtil.getNextCode(
+                        poData.getTable(),
+                        "sTransNox",
+                        true,
+                        loConn,
+                        psBranchCd
+                );
+
+            } finally {
+                if (!pbWithParent) {
+                    MiscUtil.close(loConn);
+                }
+            }
+        }
+
+        private void rebaseDetailTransNox(String fsTransNox) {
+            for (int lnCtr = 0; lnCtr < paDetail.size(); lnCtr++) {
+                paDetail.get(lnCtr).setTransNox(fsTransNox);
+                paDetail.get(lnCtr).setEntryNox(lnCtr + 1);
+            }
+        }
+
+        private boolean saveNewTransaction(UnitPOMaster loNewEnt) {
+
+            /*
+             * Retry several times in case another PC saves a transaction
+             * between our number generation and our actual INSERT.
+             */
+            for (int lnTry = 0; lnTry < 10; lnTry++) {
+
+                if (!pbWithParent) {
+                    poGRider.beginTrans();
+                }
+
+                /*
+                 * ============================================================
+                 * GET THE CURRENT TRANSACTION NUMBER
+                 *
+                 * Do NOT use the transaction number generated when the
+                 * New PO screen was opened.
+                 *
+                 * Get it again immediately before saving.
+                 * ============================================================
+                 */
+                String lsTransNox = getFreshTransNox();
+
+                if (lsTransNox == null || lsTransNox.isEmpty()) {
+
+                    if (!pbWithParent) {
+                        poGRider.rollbackTrans();
+                    }
+
+                    setMessage("Unable to generate transaction number.");
+                    return false;
+                }
+
+                /*
+                 * ============================================================
+                 * UPDATE TRANSACTION NUMBER
+                 * ============================================================
+                 */
+                loNewEnt.setTransNox(lsTransNox);
+
+                /*
+                 * ============================================================
+                 * UPDATE REFERENCE NUMBER
+                 *
+                 * Reference No. is NOT automatically changed when we change
+                 * sTransNox because sReferNox is a separate database field.
+                 *
+                 * Your system uses the LAST 8 CHARACTERS of the transaction
+                 * number as the Reference No.
+                 *
+                 * Example:
+                 *
+                 * POW126002536
+                 *     ↓
+                 * 26002536
+                 * ============================================================
+                 */
+                String lsReferNox = lsTransNox;
+
+                if (lsReferNox.length() > 8) {
+                    lsReferNox = lsReferNox.substring(lsReferNox.length() - 8);
+                }
+
+                loNewEnt.setReferNo(lsReferNox);
+
+                /*
+                 * ============================================================
+                 * UPDATE DETAILS
+                 *
+                 * Keep all the user's existing detail information.
+                 * Only change the transaction number attached to them.
+                 * ============================================================
+                 */
+                rebaseDetailTransNox(lsTransNox);
+
+                loNewEnt.setEntryNox(ItemCount());
+                loNewEnt.setModifiedBy(poGRider.getUserID());
+                loNewEnt.setDateModified(poGRider.getServerDate());
+
+                /*
+                 * ============================================================
+                 * SAVE DETAILS
+                 * ============================================================
+                 */
+                if (!saveDetail(lsTransNox)) {
+
+                    if (!pbWithParent) {
+                        poGRider.rollbackTrans();
+                    }
+
+                    return false;
+                }
+
+                /*
+                 * ============================================================
+                 * GENERATE INSERT SQL FOR MASTER
+                 * ============================================================
+                 */
+                String lsSQL = MiscUtil.makeSQL((GEntity) loNewEnt);
+
+                /*
+                 * ============================================================
+                 * SAVE MASTER
+                 * ============================================================
+                 */
+                if (poGRider.executeQuery(
+                        lsSQL,
+                        loNewEnt.getTable(),
+                        "",
+                        ""
+                ) > 0) {
+
+                    /*
+                     * SUCCESS
+                     */
+                    if (!pbWithParent) {
+                        poGRider.commitTrans();
+                    }
+
+                    return true;
+                }
+
+                /*
+                 * Something went wrong.
+                 */
+                String lsErr = poGRider.getErrMsg();
+
+                /*
+                 * Roll back this attempt before retrying.
+                 */
+                if (!pbWithParent) {
+                    poGRider.rollbackTrans();
+                }
+
+                /*
+                 * ============================================================
+                 * DUPLICATE TRANSACTION NUMBER
+                 *
+                 * Another PC saved this number first.
+                 *
+                 * Try again with another fresh transaction number.
+                 * ============================================================
+                 */
+                if (isDuplicateKeyError(lsErr)) {
+
+                    setErrMsg("");
+
+                    continue;
+                }
+
+                /*
+                 * It wasn't a duplicate-key problem.
+                 * Stop and report the actual error.
+                 */
+                if (lsErr != null && !lsErr.isEmpty()) {
+                    setErrMsg(lsErr);
+                }
+
+                return false;
+            }
+
+            setMessage("Unable to generate a unique transaction number.");
+            return false;
+        }
+        
+//End of Helpers 
     public boolean printRecord() {
         if (poData == null) {
             ShowMessageFX.Warning("Unable to print transaction.", "Warning", "No record loaded.");
@@ -1396,14 +1862,15 @@ public class PurchaseOrders {
         params.put("sCompnyNm", "Guanzon Group");
         params.put("sBranchNm", poGRider.getBranchName());
         params.put("sAddressx", poGRider.getAddress() + ", " + poGRider.getTownName() + " " + poGRider.getProvince());
-        params.put("sDestinat", poData.getDestinat());
+        params.put("sDestinat", getDestinat(poData.getDestinat()));
         params.put("sTransNox", poData.getTransNox());
         params.put("sReferNox", poData.getReferNo());
         params.put("dTransact", SQLUtil.dateFormat(poData.getDateTransact(), SQLUtil.FORMAT_LONG_DATE));
         params.put("sPrintdBy", poGRider.getClientName());
-
+        params.put("sTermName", takeTerm(poData.getTermCode()));
         JSONObject loJSON;
-
+        
+        
         try {
             String lsSQL = "SELECT sClientNm FROM Client_Master WHERE sClientID = " + SQLUtil.toSQL(poData.getSupplier());
             ResultSet loRS = poGRider.executeQuery(lsSQL);
@@ -1530,7 +1997,7 @@ public class PurchaseOrders {
 
             JasperPrint jrprint = JasperFillManager.fillReport(poGRider.getReportPath()
                     + "PurchaseOrderLP.jasper", params, jrjson);
-
+            System.out.println("HERE: " + poGRider.getReportPath());
             JasperViewer jv = new JasperViewer(jrprint, false);
             jv.setVisible(true);
             jv.setAlwaysOnTop(true);
